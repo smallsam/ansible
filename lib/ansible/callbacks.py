@@ -27,6 +27,7 @@ import fcntl
 import constants
 import locale
 from ansible.color import stringc
+from ansible.module_utils import basic
 
 import logging
 if constants.DEFAULT_LOG_PATH != '':
@@ -456,6 +457,12 @@ class PlaybookRunnerCallbacks(DefaultRunnerCallbacks):
         item = None
         if type(results) == dict:
             item = results.get('item', None)
+            if isinstance(item, unicode):
+                item = utils.unicode.to_bytes(item)
+            results = basic.json_dict_unicode_to_bytes(results)
+        else:
+            results = utils.unicode.to_bytes(results)
+        host = utils.unicode.to_bytes(host)
         if item:
             msg = "fatal: [%s] => (item=%s) => %s" % (host, item, results)
         else:
@@ -603,13 +610,13 @@ class PlaybookCallbacks(object):
         call_callback_module('playbook_on_no_hosts_remaining')
 
     def on_task_start(self, name, is_conditional):
-        name = utils.to_bytes(name)
+        name = utils.unicode.to_bytes(name)
         msg = "TASK: [%s]" % name
         if is_conditional:
             msg = "NOTIFIED: [%s]" % name
 
         if hasattr(self, 'start_at'):
-            self.start_at = utils.to_bytes(self.start_at)
+            self.start_at = utils.unicode.to_bytes(self.start_at)
             if name == self.start_at or fnmatch.fnmatch(name, self.start_at):
                 # we found out match, we can get rid of this now
                 del self.start_at
@@ -622,7 +629,13 @@ class PlaybookCallbacks(object):
         if hasattr(self, 'start_at'): # we still have start_at so skip the task
             self.skip_task = True
         elif hasattr(self, 'step') and self.step:
-            msg = ('Perform task: %s (y/n/c): ' % name).encode(sys.stdout.encoding)
+            if isinstance(name, str):
+                name = utils.unicode.to_unicode(name)
+            msg = u'Perform task: %s (y/n/c): ' % name
+            if sys.stdout.encoding:
+                msg = msg.encode(sys.stdout.encoding, errors='replace')
+            else:
+                msg = msg.encode('utf-8')
             resp = raw_input(msg)
             if resp.lower() in ['y','yes']:
                 self.skip_task = False
@@ -672,7 +685,7 @@ class PlaybookCallbacks(object):
             result = prompt(msg, private)
 
         # if result is false and default is not None
-        if not result and default:
+        if not result and default is not None:
             result = default
 
 

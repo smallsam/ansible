@@ -56,9 +56,12 @@ In the example below, the "exact_count" of instances is set to 5.  This means if
 be terminated.
 
 What is being counted is specified by the "count_tag" parameter.  The parameter "instance_tags" is used to apply tags to the newly created
-instance.
+instance.::
+
+    # demo_setup.yml
 
     - hosts: localhost
+      connection: local
       gather_facts: False
 
       tasks:
@@ -79,11 +82,12 @@ instance.
 
 The data about what instances are created is being saved by the "register" keyword in the variable named "ec2".
 
-From this, we'll use the add_host module to dynamically create a host group consisting of these new instances.  This facilitates performing configuration actions on the hosts immediately in a subsequent task::
+From this, we'll use the add_host module to dynamically create a host group consisting of these new instances.  This facilitates performing configuration actions on the hosts immediately in a subsequent task.::
 
     # demo_setup.yml
 
     - hosts: localhost
+      connection: local
       gather_facts: False
 
       tasks:
@@ -100,6 +104,7 @@ From this, we'll use the add_host module to dynamically create a host group cons
                 Name: Demo
              instance_tags:
                 Name: Demo
+          register: ec2
     
        - name: Add all instance public IPs to host group
          add_host: hostname={{ item.public_ip }} groupname=ec2hosts
@@ -149,7 +154,7 @@ it will be automatically discoverable via a dynamic group like so::
      tasks:
        - ping
 
-Using this philosophy can be a great way to keep systems seperated by the function they perform.
+Using this philosophy can be a great way to keep systems separated by the function they perform.
 
 In this example, if we wanted to define variables that are automatically applied to each machine tagged with the 'class' of 'webserver', 'group_vars'
 in ansible can be used.  See :doc:`splitting_out_vars`.
@@ -219,7 +224,7 @@ Generally speaking, we find most users using Packer.
 
 If you do not want to adopt Packer at this time, configuring a base-image with Ansible after provisioning (as shown above) is acceptable.
 
-.. aws_next_steps::
+.. _aws_next_steps:
 
 Next Steps: Explore Modules
 ```````````````````````````

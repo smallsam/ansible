@@ -15,9 +15,11 @@ CREDENTIALS_ARG =
 endif
 
 # http://unix.stackexchange.com/questions/30091/fix-or-alternative-for-mktemp-in-os-x
-TMPDIR = $(shell mktemp -d 2>/dev/null || mktemp -d -t 'mytmpdir')
+MYTMPDIR = $(shell mktemp -d 2>/dev/null || mktemp -d -t 'mytmpdir')
 
 VAULT_PASSWORD_FILE = vault-password
+
+CONSUL_RUNNING := $(shell python consul_running.py)
 
 all: parsing test_var_precedence unicode non_destructive destructive includes check_mode test_hash test_handlers test_group_by test_vault
 
@@ -30,12 +32,15 @@ parsing:
 	ansible-playbook good_parsing.yml -i $(INVENTORY) -e @$(VARS_FILE) $(CREDENTIALS_ARG) -v $(TEST_FLAGS)
 
 includes:
-	ansible-playbook test_includes.yml -i $(INVENTORY) -e @$(VARS_FILE) $(CREDENTIALS_ARG) $(TEST_FLAGS) 
+	ansible-playbook test_includes.yml -i $(INVENTORY) -e @$(VARS_FILE) $(CREDENTIALS_ARG) $(TEST_FLAGS)
 
 unicode:
-	ansible-playbook unicode.yml -i $(INVENTORY) -e @$(VARS_FILE) -v $(TEST_FLAGS)
+	ansible-playbook unicode.yml -i $(INVENTORY) -e @$(VARS_FILE) -v $(TEST_FLAGS) -e 'extra_var=café'
 	# Test the start-at-task flag #9571
 	ansible-playbook unicode.yml -i $(INVENTORY) -e @$(VARS_FILE) -v --start-at-task '*¶' -e 'start_at_task=True' $(TEST_FLAGS)
+
+mine:
+	ansible-playbook mine.yml -i $(INVENTORY) -e @$(VARS_FILE) $(CREDENTIALS_ARG) -v $(TEST_FLAGS)
 
 non_destructive:
 	ansible-playbook non_destructive.yml -i $(INVENTORY) -e @$(VARS_FILE) $(CREDENTIALS_ARG) -v $(TEST_FLAGS)
@@ -65,6 +70,15 @@ test_vault:
 	ansible-playbook test_vault.yml -i $(INVENTORY) $(CREDENTIALS_ARG) -v $(TEST_FLAGS) --vault-password-file $(VAULT_PASSWORD_FILE) --syntax-check
 	ansible-playbook test_vault.yml -i $(INVENTORY) $(CREDENTIALS_ARG) -v $(TEST_FLAGS) --vault-password-file $(VAULT_PASSWORD_FILE)
 
+# test_delegate_to does not work unless we have permission to ssh to localhost.
+# Would take some more effort on our test systems to implement that -- probably
+# the test node should create an ssh public-private key pair that allows the
+# root user on a node to ssh to itself.  Until then, this is not in make all.
+# Have to run it manually.  Ordinary users should be able to run this test as
+# long as they have permissions to login to their local machine via ssh.
+test_delegate_to:
+	ansible-playbook test_delegate_to.yml -i $(INVENTORY) -e @$(VARS_FILE) $(CREDENTIALS_ARG) -v $(TEST_FLAGS)
+
 test_winrm:
 	ansible-playbook test_winrm.yml -i inventory.winrm -e @$(VARS_FILE) $(CREDENTIALS_ARG) -v $(TEST_FLAGS)
 
@@ -82,8 +96,7 @@ gce_cleanup:
 	python cleanup_gce.py -y --match="^$(CLOUD_RESOURCE_PREFIX)"
 
 rackspace_cleanup:
-	@echo "FIXME - cleanup_rax.py not yet implemented"
-	@# python cleanup_rax.py -y --match="^$(CLOUD_RESOURCE_PREFIX)"
+	python cleanup_rax.py -y --match="^$(CLOUD_RESOURCE_PREFIX)"
 
 $(CREDENTIALS_FILE):
 	@echo "No credentials file found.  A file named '$(CREDENTIALS_FILE)' is needed to provide credentials needed to run cloud tests.  See sample 'credentials.template' file."
@@ -108,10 +121,20 @@ rackspace: $(CREDENTIALS_FILE)
     CLOUD_RESOURCE_PREFIX="$(CLOUD_RESOURCE_PREFIX)" make rackspace_cleanup ; \
     exit $$RC;
 
+$(CONSUL_RUNNING):
+
+consul:
+ifeq ($(CONSUL_RUNNING), True)
+	ansible-playbook -i $(INVENTORY) consul.yml ; \
+	ansible-playbook -i ../../plugins/inventory/consul_io.py consul_inventory.yml
+else
+	@echo "Consul agent is not running locally. To run a cluster locally see http://github.com/sgargan/consul-vagrant"
+endif
+
 test_galaxy: test_galaxy_spec test_galaxy_yaml
 
 test_galaxy_spec:
-	mytmpdir=$(TMPDIR) ; \
+	mytmpdir=$(MYTMPDIR) ; \
 	ansible-galaxy install -r galaxy_rolesfile -p $$mytmpdir/roles ; \
     cp galaxy_playbook.yml $$mytmpdir ; \
     ansible-playbook -i $(INVENTORY) $$mytmpdir/galaxy_playbook.yml -v $(TEST_FLAGS) ; \
@@ -120,7 +143,7 @@ test_galaxy_spec:
     exit $$RC
 
 test_galaxy_yaml:
-	mytmpdir=$(TMPDIR) ; \
+	mytmpdir=$(MYTMPDIR) ; \
 	ansible-galaxy install -r galaxy_roles.yml -p $$mytmpdir/roles ; \
     cp galaxy_playbook.yml $$mytmpdir ; \
     ansible-playbook -i $(INVENTORY) $$mytmpdir/galaxy_playbook.yml -v $(TEST_FLAGS) ; \

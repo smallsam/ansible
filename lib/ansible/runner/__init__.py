@@ -394,20 +394,20 @@ class Runner(object):
         actual_user = inject.get('ansible_ssh_user', self.remote_user)
         thisuser = None
 
-        if host in inject['hostvars']:
-            if inject['hostvars'][host].get('ansible_ssh_user'):
-                # user for delegate host in inventory
-                thisuser = inject['hostvars'][host].get('ansible_ssh_user')
-        else:
-            # look up the variables for the host directly from inventory
-            try:
-                host_vars = self.inventory.get_variables(host, vault_password=self.vault_pass)
-                if 'ansible_ssh_user' in host_vars:
-                    thisuser = host_vars['ansible_ssh_user']
-            except Exception, e:
-                # the hostname was not found in the inventory, so
-                # we just ignore this and try the next method
-                pass
+        try:
+            if host in inject['hostvars']:
+                if inject['hostvars'][host].get('ansible_ssh_user'):
+                    # user for delegate host in inventory
+                    thisuser = inject['hostvars'][host].get('ansible_ssh_user')
+                else:
+                    # look up the variables for the host directly from inventory
+                    host_vars = self.inventory.get_variables(host, vault_password=self.vault_pass)
+                    if 'ansible_ssh_user' in host_vars:
+                        thisuser = host_vars['ansible_ssh_user']
+        except errors.AnsibleError, e:
+            # the hostname was not found in the inventory, so
+            # we just ignore this and try the next method
+            pass
 
         if thisuser is None and self.remote_user:
             # user defined by play/runner
@@ -678,6 +678,7 @@ class Runner(object):
         temp_vars = utils.merge_hash(temp_vars, self.play_vars)
         temp_vars = utils.merge_hash(temp_vars, self.play_file_vars)
         temp_vars = utils.merge_hash(temp_vars, self.extra_vars)
+        temp_vars = utils.merge_hash(temp_vars, {'groups': inject['groups']})
 
         hostvars = HostVars(temp_vars, self.inventory, vault_password=self.vault_pass)
 
@@ -733,6 +734,10 @@ class Runner(object):
                         result = utils.jsonify(dict(changed=False, skipped=True))
                         self.callbacks.on_skipped(host, None)
                         return ReturnData(host=host, result=result)
+            except errors.AnsibleError, e:
+                raise
+            except Exception, e:
+                raise errors.AnsibleError("Unexpected error while executing task: %s" % str(e))
 
             # strip out any jinja2 template syntax within
             # the data returned by the lookup plugin
@@ -813,6 +818,10 @@ class Runner(object):
                      port,
                      complex_args=complex_args
                 )
+
+                if 'stdout' in result.result and 'stdout_lines' not in result.result:
+                    result.result['stdout_lines'] = result.result['stdout'].splitlines()
+
                 results.append(result.result)
                 if result.comm_ok == False:
                     all_comm_ok = False
@@ -926,6 +935,8 @@ class Runner(object):
             actual_private_key_file = delegate['private_key_file']
             self.sudo_pass = delegate['sudo_pass']
             inject = delegate['inject']
+            # set resolved delegate_to into inject so modules can call _remote_checksum
+            inject['delegate_to'] = self.delegate_to
 
         # user/pass may still contain variables at this stage
         actual_user = template.template(self.basedir, actual_user, inject)
@@ -982,7 +993,7 @@ class Runner(object):
         # render module_args and complex_args templates
         try:
             # When templating module_args, we need to be careful to ensure
-            # that no variables inadvertantly (or maliciously) add params
+            # that no variables inadvertently (or maliciously) add params
             # to the list of args. We do this by counting the number of k=v
             # pairs before and after templating.
             num_args_pre = self._count_module_args(module_args, allow_dupes=True)
@@ -1026,7 +1037,7 @@ class Runner(object):
 
             cond = template.template(self.basedir, until, inject, expand_lists=False)
             if not utils.check_conditional(cond,  self.basedir, inject, fail_on_undefined=self.error_on_undefined_vars):
-                retries = self.module_vars.get('retries')
+                retries = template.template(self.basedir, self.module_vars.get('retries'), inject, expand_lists=False)
                 delay   = self.module_vars.get('delay')
                 for x in range(1, int(retries) + 1):
                     # template the delay, cast to float and sleep
@@ -1223,10 +1234,28 @@ class Runner(object):
 
     def _remote_checksum(self, conn, tmp, path, inject):
         ''' takes a remote checksum and returns 1 if no file '''
-        if 'delegate_to' in inject and inject['delegate_to']:
-            python_interp = inject['hostvars'][inject['delegate_to']].get('ansible_python_interpreter', 'python')
+
+        # Lookup the python interp from the host or delegate
+
+        # host == inven_host when there is no delegate
+        host = inject['inventory_hostname']
+        if 'delegate_to' in inject:
+            delegate = inject['delegate_to']
+            if delegate:
+                # host == None when the delegate is not in inventory
+                host = None
+                # delegate set, check whether the delegate has inventory vars
+                delegate = template.template(self.basedir, delegate, inject)
+                if delegate in inject['hostvars']:
+                    # host == delegate if we need to lookup the
+                    # python_interpreter from the delegate's inventory vars
+                    host = delegate
+
+        if host:
+            python_interp = inject['hostvars'][host].get('ansible_python_interpreter', 'python')
         else:
-            python_interp = inject['hostvars'][inject['inventory_hostname']].get('ansible_python_interpreter', 'python')
+            python_interp = 'python'
+
         cmd = conn.shell.checksum(path, python_interp)
         data = self._low_level_exec_command(conn, cmd, tmp, sudoable=True)
         data2 = utils.last_non_blank_line(data['stdout'])
@@ -1439,9 +1468,15 @@ class Runner(object):
             # Expose the current hostgroup to the bypassing plugins
             self.host_set = hosts
             # We aren't iterating over all the hosts in this
-            # group. So, just pick the first host in our group to
+            # group. So, just choose the "delegate_to" host if that is defined and is
+            # one of the targeted hosts, otherwise pick the first host in our group to
             # construct the conn object with.
-            result_data = self._executor(hosts[0], None).result
+            if self.delegate_to is not None and self.delegate_to in hosts:
+                host = self.delegate_to
+            else:
+                host = hosts[0]
+
+            result_data = self._executor(host, None).result
             # Create a ResultData item for each host in this group
             # using the returned result. If we didn't do this we would
             # get false reports of dark hosts.

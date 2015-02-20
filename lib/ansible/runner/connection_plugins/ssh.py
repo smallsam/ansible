@@ -230,6 +230,7 @@ class Connection(object):
                 host_fh.close()
                 
             for line in data.split("\n"):
+                line = line.strip()
                 if line is None or " " not in line:
                     continue
                 tokens = line.split()
@@ -334,7 +335,7 @@ class Connection(object):
                         "sudo", "Sorry, try again.")
                     if sudo_errput.strip().endswith("%s%s" % (prompt, incorrect_password)):
                         raise errors.AnsibleError('Incorrect sudo password')
-                    elif sudo_errput.endswith(prompt):
+                    elif prompt and sudo_errput.endswith(prompt):
                         stdin.write(self.runner.sudo_pass + '\n')
 
                 if p.stdout in rfd:

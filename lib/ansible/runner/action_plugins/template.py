@@ -92,6 +92,13 @@ class ActionModule(object):
         local_checksum = utils.checksum_s(resultant)
         remote_checksum = self.runner._remote_checksum(conn, tmp, dest, inject)
 
+        if remote_checksum in ('0', '2', '3', '4'):
+            # Note: 1 means the file is not present which is fine; template
+            # will create it
+            result = dict(failed=True, msg="failed to checksum remote file."
+                        " Checksum error code: %s" % remote_checksum)
+            return ReturnData(conn=conn, comm_ok=True, result=result)
+
         if local_checksum != remote_checksum:
 
             # template is different from the remote value
@@ -138,6 +145,7 @@ class ActionModule(object):
             # the module to follow links.  When doing that, we have to set
             # original_basename to the template just in case the dest is
             # a directory.
+            module_args = ''
             new_module_args = dict(
                 src=None,
                 original_basename=os.path.basename(source),
@@ -147,6 +155,6 @@ class ActionModule(object):
             # rely on the file module to report its changed status
             if self.runner.noop_on_check(inject):
                 new_module_args['CHECKMODE'] = True
-            module_args = utils.merge_module_args(module_args, new_module_args)
-            return self.runner._execute_module(conn, tmp, 'file', module_args, inject=inject, complex_args=complex_args)
+            options.update(new_module_args)
+            return self.runner._execute_module(conn, tmp, 'file', module_args, inject=inject, complex_args=options)
 

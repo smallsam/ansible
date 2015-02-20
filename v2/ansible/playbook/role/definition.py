@@ -23,29 +23,34 @@ from six import iteritems, string_types
 
 import os
 
+from ansible import constants as C
 from ansible.errors import AnsibleError
 from ansible.parsing.yaml.objects import AnsibleBaseYAMLObject, AnsibleMapping
 from ansible.playbook.attribute import Attribute, FieldAttribute
 from ansible.playbook.base import Base
+from ansible.playbook.conditional import Conditional
+from ansible.playbook.taggable import Taggable
+from ansible.utils.path import unfrackpath
 
 
 __all__ = ['RoleDefinition']
 
 
-class RoleDefinition(Base):
+class RoleDefinition(Base, Conditional, Taggable):
 
     _role = FieldAttribute(isa='string')
 
-    def __init__(self):
-        self._role_path   = None
-        self._role_params = dict()
+    def __init__(self, role_basedir=None):
+        self._role_path    = None
+        self._role_basedir = role_basedir
+        self._role_params  = dict()
         super(RoleDefinition, self).__init__()
 
-    def __repr__(self):
-        return 'ROLEDEF: ' + self._attributes.get('role', '<no name set>')
+    #def __repr__(self):
+    #    return 'ROLEDEF: ' + self._attributes.get('role', '<no name set>')
 
     @staticmethod
-    def load(data, loader=None):
+    def load(data, variable_manager=None, loader=None):
         raise AnsibleError("not implemented")
 
     def munge(self, ds):
@@ -109,21 +114,33 @@ class RoleDefinition(Base):
         append it to the default role path
         '''
 
-        # FIXME: this should use unfrackpath once the utils code has been sorted out
-        role_path = os.path.normpath(role_name)
+        role_path = unfrackpath(role_name)
+
         if self._loader.path_exists(role_path):
             role_name = os.path.basename(role_name)
             return (role_name, role_path)
         else:
-            # FIXME: this should search in the configured roles path
-            for path in ('./roles', '/etc/ansible/roles'):
-                role_path = os.path.join(path, role_name)
+            # we always start the search for roles in the base directory of the playbook
+            role_search_paths = [os.path.join(self._loader.get_basedir(), 'roles'), './roles', './']
+
+            # also search in the configured roles path
+            if C.DEFAULT_ROLES_PATH:
+                configured_paths = C.DEFAULT_ROLES_PATH.split(os.pathsep)
+                role_search_paths.extend(configured_paths)
+
+            # finally, append the roles basedir, if it was set, so we can
+            # search relative to that directory for dependent roles
+            if self._role_basedir:
+                role_search_paths.append(self._role_basedir)
+
+            # now iterate through the possible paths and return the first one we find
+            for path in role_search_paths:
+                role_path = unfrackpath(os.path.join(path, role_name))
                 if self._loader.path_exists(role_path):
                     return (role_name, role_path)
 
-        # FIXME: make the parser smart about list/string entries
-        #        in the yaml so the error line/file can be reported
-        #        here
+        # FIXME: make the parser smart about list/string entries in
+        #        the yaml so the error line/file can be reported here
 
         raise AnsibleError("the role '%s' was not found" % role_name)
 

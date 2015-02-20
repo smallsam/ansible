@@ -10,7 +10,7 @@
 #   make deb-src -------------- produce a DEB source
 #   make deb ------------------ produce a DEB
 #   make docs ----------------- rebuild the manpages (results are checked in)
-#   make tests ---------------- run the tests
+#   make tests ---------------- run the tests (see test/README.md for requirements)
 #   make pyflakes, make pep8 -- source code checks
 
 ########################################################
@@ -151,6 +151,7 @@ clean:
 	rm -rf docs/js
 	@echo "Cleaning up authors file"
 	rm -f AUTHORS.TXT
+	find . -type f -name '*.pyc' -delete
 
 python:
 	$(PYTHON) setup.py build

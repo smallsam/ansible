@@ -119,13 +119,19 @@ Here are some examples::
 
          - debug: msg="{{ lookup('pipe','date') }} is the raw result of running this command"
 
+         # redis_kv lookup requires the Python redis package
          - debug: msg="{{ lookup('redis_kv', 'redis://localhost:6379,somekey') }} is value in Redis for somekey"
 
+         # dnstxt lookup requires the Python dnspython package
          - debug: msg="{{ lookup('dnstxt', 'example.com') }} is a DNS TXT record for example.com"
 
          - debug: msg="{{ lookup('template', './some_template.j2') }} is a value from evaluation of this template"
 
          - debug: msg="{{ lookup('etcd', 'foo') }} is a value from a locally running etcd"
+
+         - debug: msg="{{item}}"
+           with_url:
+                - 'http://github.com/gremlin.keys'
 
 As an alternative you can also assign lookup plugins to variables or use them
 elsewhere.  This macros are evaluated each time they are used in a task (or

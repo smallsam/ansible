@@ -15,7 +15,6 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
-
 # take a list of files and (optionally) a list of paths
 # return the first existing file found in the paths
 # [file1, file2, file3], [path1, path2, path3]
@@ -118,17 +117,18 @@
 #    ignore_errors: true
 
 
-from ansible import utils, errors
 import os
 
-class LookupModule(object):
+from jinja2.exceptions import UndefinedError
 
-    def __init__(self, basedir=None, **kwargs):
-        self.basedir = basedir
+from ansible.errors import AnsibleUndefinedVariable
+from ansible.plugins.lookup import LookupBase
+from ansible.template import Templar
+from ansible.utils.boolean import boolean
 
-    def run(self, terms, inject=None, **kwargs):
+class LookupModule(LookupBase):
 
-        terms = utils.listify_lookup_plugin_terms(terms, self.basedir, inject)
+    def run(self, terms, variables, **kwargs):
 
         result = None
         anydict = False
@@ -144,7 +144,7 @@ class LookupModule(object):
                 if isinstance(term, dict):
                     files = term.get('files', [])
                     paths = term.get('paths', [])
-                    skip  = utils.boolean(term.get('skip', False))
+                    skip  = boolean(term.get('skip', False))
 
                     filelist = files
                     if isinstance(files, basestring):
@@ -172,20 +172,30 @@ class LookupModule(object):
         else:
             total_search = terms
 
+        templar = Templar(loader=self._loader, variables=variables)
+        roledir = variables.get('roledir')
         for fn in total_search:
-            if inject and '_original_file' in inject:
-                # check the templates and vars directories too,
-                # if they exist
-                for roledir in ('templates', 'vars'):
-                    path = utils.path_dwim(os.path.join(self.basedir, '..', roledir), fn)
-                    if os.path.exists(path):
-                        return [path]
-            # if none of the above were found, just check the
-            # current filename against the basedir (this will already
-            # have ../files from runner, if it's a role task
-            path = utils.path_dwim(self.basedir, fn)
-            if os.path.exists(path):
-                return [path]
+            try:
+                fn = templar.template(fn)
+            except (AnsibleUndefinedVariable, UndefinedError), e:
+                continue
+
+            if os.path.isabs(fn) and os.path.exists(fn):
+                return [fn]
+            else:
+                if roledir is not None:
+                    # check the templates and vars directories too,if they exist
+                    for subdir in ('templates', 'vars'):
+                        path = self._loader.path_dwim_relative(roledir, subdir, fn)
+                        if os.path.exists(path):
+                            return [path]
+
+                # if none of the above were found, just check the
+                # current filename against the basedir (this will already
+                # have ../files from runner, if it's a role task
+                path = self._loader.path_dwim(fn)
+                if os.path.exists(path):
+                    return [path]
         else:
             if skip:
                 return []
