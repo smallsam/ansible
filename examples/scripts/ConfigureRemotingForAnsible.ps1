@@ -17,7 +17,7 @@
 Param (
     [string]$SubjectName = $env:COMPUTERNAME,
     [int]$CertValidityDays = 365,
-    $CreateSelfSignedCert = $true
+    $CreateSelfSignedCert = $false
 )
 
 
@@ -141,19 +141,37 @@ $listeners = Get-ChildItem WSMan:\localhost\Listener
 If (!($listeners | Where {$_.Keys -like "TRANSPORT=HTTPS"}))
 {
     # HTTPS-based endpoint does not exist.
-    If (Get-Command "New-SelfSignedCertificate" -ErrorAction SilentlyContinue)
+
+    if ($CreateSelfSignedCert)
     {
-        $cert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation "Cert:\LocalMachine\My"
-        $thumbprint = $cert.Thumbprint
+        If (Get-Command "New-SelfSignedCertificate" -ErrorAction SilentlyContinue)
+        {
+            $cert = New-SelfSignedCertificate -DnsName [System.Net.DNS]::GetHostByName('').HostName -CertStoreLocation "Cert:\LocalMachine\My"
+            $thumbprint = $cert.Thumbprint
+        }
+        Else
+        {
+            $thumbprint = New-LegacySelfSignedCert -SubjectName [System.Net.DNS]::GetHostByName('').HostName
+        }
     }
     Else
     {
-        $thumbprint = New-LegacySelfSignedCert -SubjectName $env:COMPUTERNAME
+        # Check if there is an appropriate existing certificate
+        # for example from certificate autoenrollment from Active Directory Certificate Services
+        # this is preferable to self-signed as it allows more simple certificate verification
+        
+        $certs = Get-ChildItem Cert:\LocalMachine\My
+        $certs = $certs | where { $_.Subject -eq "CN="+[System.Net.DNS]::GetHostByName('').HostName }
+        $certs = $certs | where { $_.Privatekey }
+        $certs = $certs | where { ( ($_.Extensions | where {$_.EnhancedKeyUsages}).EnhancedKeyUsages | where {$_.Value -eq "1.3.6.1.5.5.7.3.1"}  ) }
+        $certs = $certs | Sort-Object -Property NotAfter 
+        
+        $thumbprint = $certs | Select-Object -Last 1 -ExpandProperty Thumbprint
     }
 
     # Create the hashtables of settings to be used.
     $valueset = @{}
-    $valueset.Add('Hostname', $env:COMPUTERNAME)
+    $valueset.Add('Hostname', [System.Net.DNS]::GetHostByName('').HostName)
     $valueset.Add('CertificateThumbprint', $thumbprint)
 
     $selectorset = @{}
